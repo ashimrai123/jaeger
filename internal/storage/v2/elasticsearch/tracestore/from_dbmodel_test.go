@@ -625,45 +625,50 @@ func TestDbProcessToResource(t *testing.T) {
 	}
 }
 
-func TestGetTraceStateFromAttrs(t *testing.T) {
+func TestGetTraceStateFromSpanTags(t *testing.T) {
 	tests := []struct {
 		name               string
-		attrs              map[string]any
+		tags               []dbmodel.KeyValue
 		expectedTraceState string
-		expectedAttrCount  int
 		description        string
 	}{
 		{
-			name: "attrs with w3c trace state",
-			attrs: map[string]any{
-				tagW3CTraceState: "vendor1=value1,vendor2=value2",
-				"other-attr":     "other-value",
+			name: "span with w3c trace state tag",
+			tags: []dbmodel.KeyValue{
+				{Key: tagW3CTraceState, Value: "vendor1=value1,vendor2=value2", Type: dbmodel.StringType},
+				{Key: "other-attr", Value: "other-value", Type: dbmodel.StringType},
 			},
 			expectedTraceState: "vendor1=value1,vendor2=value2",
-			expectedAttrCount:  1,
-			description:        "Should extract and remove W3C trace state",
+			description:        "Should extract W3C trace state from tags and set on span",
 		},
 		{
-			name: "attrs without w3c trace state",
-			attrs: map[string]any{
-				"other-attr": "other-value",
+			name: "span without w3c trace state tag",
+			tags: []dbmodel.KeyValue{
+				{Key: "other-attr", Value: "other-value", Type: dbmodel.StringType},
 			},
 			expectedTraceState: "",
-			expectedAttrCount:  1,
-			description:        "Should return empty string when no trace state",
+			description:        "Should have empty trace state when no w3c tag present",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			attrs := pcommon.NewMap()
-			require.NoError(t, attrs.FromRaw(tt.attrs))
-			traceState := getTraceStateFromAttrs(attrs)
-			assert.Equal(t, tt.expectedTraceState, traceState, tt.description)
-			assert.Equal(t, tt.expectedAttrCount, attrs.Len(), "Attribute count should match expected")
+			dbSpan := &dbmodel.Span{
+				TraceID: dbmodel.TraceID("0123456789abcdef0123456789abcdef"),
+				SpanID:  dbmodel.SpanID("0123456789abcdef"),
+				Tags:    tt.tags,
+			}
+			span := ptrace.NewSpan()
+			err := dbSpanToSpan(dbSpan, span)
+			require.NoError(t, err)
+			assert.Equal(t, tt.expectedTraceState, span.TraceState().AsRaw(), tt.description)
+			// Verify w3c.tracestate was NOT added to attributes
+			_, exists := span.Attributes().Get(tagW3CTraceState)
+			assert.False(t, exists, "w3c.tracestate should not appear in attributes")
 		})
 	}
 }
+
 
 func TestSetInternalSpanStatus(t *testing.T) {
 	okStatus := ptrace.NewStatus()
